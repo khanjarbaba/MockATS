@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock ATS Simulator</title>
+<style>
+  :root { --bg:#0f1420; --panel:#1a2233; --line:#2c3a55; --txt:#e6ecf5; --dim:#8fa1bd; --acc:#4da3ff; --ok:#3ecf8e; --warn:#ffb454; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; background:var(--bg); color:var(--txt); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; }
+  #armed { font-size:12px; padding:2px 10px; border-radius:12px; border:1px solid var(--line); }
+  .armed-true { color:var(--err); border-color:var(--err)!important; }
+  .armed-false { color:var(--ok); }
+  nav { display:flex; gap:4px; padding:8px 20px 0; border-bottom:1px solid var(--line); }
+  nav button { background:none; border:1px solid transparent; border-bottom:none; color:var(--dim); padding:8px 14px; cursor:pointer; font:inherit; border-radius:8px 8px 0 0; }
+  nav button.active { color:var(--txt); background:var(--panel); border-color:var(--line); }
+  main { padding:20px; max-width:1200px; margin:0 auto; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:0 8px 8px 8px; padding:16px; }
+  label { display:block; color:var(--dim); font-size:12px; margin:10px 0 2px; }
+  input, select, textarea { width:100%; background:var(--bg); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit; }
+  textarea { min-height:180px; }
+  button.action { background:var(--acc); color:#04121f; border:none; border-radius:6px; padding:8px 16px; font:inherit; font-weight:700; cursor:pointer; margin-top:12px; }
+  button.ghost { background:none; color:var(--acc); border:1px solid var(--acc); }
+  button.danger { background:var(--err); }
+  pre { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; max-height:420px; white-space:pre-wrap; word-break:break-all; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim); font-weight:400; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; border:1px solid var(--line); }
+  .tag.outbound { color:var(--acc); } .tag.webhook { color:var(--warn); }
+  .tag.completed { color:var(--ok); } .tag.invited, .tag.started { color:var(--warn); }
+  .row { display:flex; gap:16px; flex-wrap:wrap; } .col { flex:1; min-width:320px; }
+  .muted { color:var(--dim); font-size:12px; }
+  a { color:var(--acc); }
+  details { margin:4px 0; } summary { cursor:pointer; color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mock ATS &rarr; SHL Simulator</h1>
+  <span id="armed">…</span>
+  <span class="muted" id="urls"></span>
+</header>
+<nav>
+  <button data-tab="simulate" class="active">Simulate</button>
+  <button data-tab="profiles">Profiles</button>
+  <button data-tab="candidates">Candidates</button>
+  <button data-tab="logs">Logs</button>
+  <button data-tab="events">Webhook Events</button>
+</nav>
+<main>
+
+<section id="tab-simulate" class="panel">
+  <div class="row">
+    <div class="col">
+      <label>ATS Profile</label>
+      <select id="sim-profile"></select>
+      <label>Action</label>
+      <select id="sim-action"></select>
+      <div id="sim-inputs"></div>
+      <label><input type="checkbox" id="sim-dry" checked style="width:auto"> Dry run (build &amp; log request, don't send)</label>
+      <label><input type="checkbox" id="sim-confirm" style="width:auto"> I confirm a REAL send to SHL (requires ARMED=true in .env)</label>
+      <button class="action" onclick="runSim()">Run</button>
+    </div>
+    <div class="col">
+      <label>Result</label>
+      <pre id="sim-result">—</pre>
+    </div>
+  </div>
+</section>
+
+<section id="tab-profiles" class="panel" hidden>
+  <div class="row">
+    <div class="col">
+      <label>Profiles</label>
+      <div id="profile-list"></div>
+      <label>New profile slug</label>
+      <input id="new-profile-name" placeholder="workday">
+      <button class="action ghost" onclick="createProfile()">Create empty profile</button>
+      <hr style="border-color:var(--line)">
+      <label>Teach selected profile — paste samples JSON</label>
+      <div class="muted">Array of samples. Each: {"kind":"request|response|webhook","action":"send_invite", then either "raw":"&lt;raw HTTP&gt;" or method/url/headers/body}</div>
+      <textarea id="samples-json" placeholder='[{"kind":"request","action":"send_invite","method":"POST","url":"https://...","headers":{"X-API-Key":"abc"},"body":{"email":"jane@x.com"}}]'></textarea>
+      <button class="action" onclick="inferSamples()">Infer draft from samples</button>
+    </div>
+    <div class="col">
+      <label>Edit config for: <b id="editing-name">—</b> <span class="muted">(saved on Save)</span></label>
+      <textarea id="profile-config" style="min-height:420px"></textarea>
+      <button class="action" onclick="saveProfile()">Save profile</button>
+      <button class="action danger" onclick="deleteProfile()">Delete</button>
+      <pre id="profile-msg" style="max-height:140px">—</pre>
+    </div>
+  </div>
+</section>
+
+<section id="tab-candidates" class="panel" hidden>
+  <button class="action ghost" onclick="loadCandidates()">Refresh</button>
+  <table id="cand-table"><thead><tr>
+    <th>ID</th><th>Name</th><th>Email</th><th>Req/Job</th><th>Status</th><th>Assessment link</th><th>Results link</th>
+  </tr></thead><tbody></tbody></table>
+</section>
+
+<section id="tab-logs" class="panel" hidden>
+  <div class="row">
+    <select id="log-dir" style="max-width:200px" onchange="loadLogs()">
+      <option value="">all directions</option>
+      <option value="outbound">outbound → SHL</option>
+      <option value="webhook">webhooks ← SHL</option>
+    </select>
+    <button class="action ghost" onclick="loadLogs()" style="margin-top:0">Refresh</button>
+  </div>
+  <div id="log-list"></div>
+</section>
+
+<section id="tab-events" class="panel" hidden>
+  <button class="action ghost" onclick="loadEvents()">Refresh</button>
+  <div id="event-list"></div>
+</section>
+
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+let profiles = [], selectedProfile = null;
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  document.querySelectorAll('main section').forEach(s => s.hidden = true);
+  $('#tab-' + b.dataset.tab).hidden = false;
+  if (b.dataset.tab === 'candidates') loadCandidates();
+  if (b.dataset.tab === 'logs') loadLogs();
+  if (b.dataset.tab === 'events') loadEvents();
+});
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+const jshow = (o) => JSON.stringify(o, null, 2);
+
+async function loadStatus() {
+  const s = await api('/api/status');
+  const el = $('#armed');
+  el.textContent = s.armed ? 'ARMED — real sends enabled' : 'SAFE — dry-run only';
+  el.className = 'armed-' + s.armed;
+  $('#urls').textContent = `SHL: ${s.shl_base_url} | callback: ${s.callback_base_url}`;
+}
+
+async function loadProfiles() {
+  profiles = await api('/api/profiles');
+  const sel = $('#sim-profile');
+  sel.innerHTML = profiles.map(p => `<option value="${p.name}">${p.display_name}</option>`).join('');
+  sel.onchange = renderActions;
+  renderActions();
+  $('#profile-list').innerHTML = profiles.map(p =>
+    `<div><a href="#" onclick="selectProfile('${p.name}');return false">${p.name}</a>
+     <span class="tag">${p.status}</span> <span class="muted">${Object.keys(p.config.actions||{}).join(', ')||'no actions'}</span></div>`).join('');
+  if (!selectedProfile && profiles.length) selectProfile(profiles[0].name);
+}
+
+function currentProfile() { return profiles.find(p => p.name === $('#sim-profile').value); }
+
+function renderActions() {
+  const p = currentProfile(); if (!p) return;
+  const actions = Object.keys(p.config.actions || {});
+  $('#sim-action').innerHTML = actions.map(a => `<option>${a}</option>`).join('');
+  $('#sim-action').onchange = renderInputs;
+  renderInputs();
+}
+
+function renderInputs() {
+  const p = currentProfile(); if (!p) return;
+  const a = (p.config.actions || {})[$('#sim-action').value];
+  const inputs = (a && a.inputs) || [];
+  $('#sim-inputs').innerHTML = inputs.map(i =>
+    `<label>${i.label || i.name}${i.required ? ' *' : ''}</label>
+     <input data-name="${i.name}" placeholder="${i.name}">`).join('');
+}
+
+async function runSim() {
+  const candidate = {}, inputs = {};
+  document.querySelectorAll('#sim-inputs input').forEach(el => {
+    const n = el.dataset.name;
+    if (!el.value) return;
+    if (n.startsWith('candidate.')) candidate[n.slice(10)] = el.value;
+    else if (n.startsWith('inputs.')) inputs[n.slice(7)] = el.value;
+    else inputs[n] = el.value;
+  });
+  if (candidate.first_name || candidate.last_name)
+    candidate.name = [candidate.first_name, candidate.last_name].filter(Boolean).join(' ');
+  const body = {
+    profile: $('#sim-profile').value, action: $('#sim-action').value,
+    candidate, inputs: { inputs, ...inputs },
+    dry_run: $('#sim-dry').checked, confirm: $('#sim-confirm').checked,
+  };
+  $('#sim-result').textContent = '…';
+  try {
+    const res = await api('/api/simulate', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    $('#sim-result').textContent = jshow(res);
+  } catch (e) { $('#sim-result').textContent = 'ERROR: ' + e.message; }
+}
+
+async function selectProfile(name) {
+  selectedProfile = name;
+  const p = await api('/api/profiles/' + name);
+  $('#editing-name').textContent = name;
+  $('#profile-config').value = jshow(p.config);
+}
+
+async function saveProfile() {
+  if (!selectedProfile) return;
+  try {
+    const config = JSON.parse($('#profile-config').value);
+    const p = profiles.find(x => x.name === selectedProfile);
+    await api('/api/profiles/' + selectedProfile, { method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name: selectedProfile, display_name: p ? p.display_name : selectedProfile, status: 'active', config }) });
+    $('#profile-msg').textContent = 'Saved ✓'; loadProfiles();
+  } catch (e) { $('#profile-msg').textContent = 'ERROR: ' + e.message; }
+}
+
+async function createProfile() {
+  const name = $('#new-profile-name').value.trim();
+  if (!name) return;
+  try {
+    await api('/api/profiles', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name, display_name: name, config: { actions: {}, webhook: {} } }) });
+    $('#new-profile-name').value = ''; loadProfiles(); selectProfile(name);
+  } catch (e) { $('#profile-msg').textContent = 'ERROR: ' + e.message; }
+}
+
+async function deleteProfile() {
+  if (!selectedProfile || !confirm('Delete profile ' + selectedProfile + '?')) return;
+  await api('/api/profiles/' + selectedProfile, { method: 'DELETE' });
+  selectedProfile = null; loadProfiles();
+}
+
+async function inferSamples() {
+  if (!selectedProfile) { $('#profile-msg').textContent = 'Select a profile first.'; return; }
+  try {
+    const samples = JSON.parse($('#samples-json').value);
+    const res = await api(`/api/profiles/${selectedProfile}/infer`, { method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ samples }) });
+    $('#profile-msg').textContent = 'Inferred ✓ — review the draft config, then Save.\n' + res.note;
+    selectProfile(selectedProfile); loadProfiles();
+  } catch (e) { $('#profile-msg').textContent = 'ERROR: ' + e.message; }
+}
+
+async function loadCandidates() {
+  const rows = await api('/api/candidates');
+  $('#cand-table tbody').innerHTML = rows.map(c => `<tr>
+    <td>${c.id}</td><td>${c.name||''}</td><td>${c.email||''}</td><td>${c.external_ref||''}</td>
+    <td><span class="tag ${c.status}">${c.status}</span></td>
+    <td>${c.assessment_link ? `<a href="${c.assessment_link}" target="_blank">link</a>` : '—'}</td>
+    <td>${c.results_link ? `<a href="${c.results_link}" target="_blank">results</a>` : '—'}</td>
+  </tr>`).join('');
+}
+
+async function loadLogs() {
+  const dir = $('#log-dir').value;
+  const logs = await api('/api/logs' + (dir ? '?direction=' + dir : ''));
+  $('#log-list').innerHTML = logs.map(t => `
+    <details>
+      <summary>#${t.id} <span class="tag ${t.direction}">${t.direction}</span>
+        ${t.method} ${t.action} ${t.dry_run ? '<span class="tag">dry-run</span>' : ''}
+        ${t.response_status ?? ''} ${t.error ? '<span class="tag" style="color:var(--err)">error</span>' : ''}
+        <span class="muted">${t.created_at}</span></summary>
+      <pre>${jshow({url:t.url, request_headers:t.request_headers,
+        request_body: tryParse(t.request_body), response_status:t.response_status,
+        response_body: tryParse(t.response_body), error:t.error})}</pre>
+    </details>`).join('') || '<span class="muted">no transactions yet</span>';
+}
+
+async function loadEvents() {
+  const evs = await api('/api/webhook-events');
+  $('#event-list').innerHTML = evs.map(e => `
+    <details>
+      <summary>#${e.id} <b>${e.event_type||'(no event type)'}</b>
+        candidate: ${e.candidate_id ?? 'unmatched'}
+        ${e.verified ? '<span class="tag" style="color:var(--ok)">verified</span>' : ''}
+        <span class="muted">${e.created_at}</span></summary>
+      <pre>${jshow({payload:e.payload, applied_changes:e.applied_changes})}</pre>
+    </details>`).join('') || '<span class="muted">no webhook events yet</span>';
+}
+
+function tryParse(s) { try { return JSON.parse(s); } catch { return s; } }
+
+loadStatus(); loadProfiles();
+setInterval(loadStatus, 15000);
+</script>
+</body>
+</html>
