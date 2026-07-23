@@ -94,7 +94,11 @@ def execute_action(
                 else {}
             ),
         },
-        "callback_url": os.getenv("CALLBACK_BASE_URL", "http://localhost:8000").rstrip("/")
+        "callback_url": (
+            os.getenv("CALLBACK_BASE_URL")
+            or os.getenv("RENDER_EXTERNAL_URL")  # set automatically on Render
+            or "http://localhost:8000"
+        ).rstrip("/")
         + f"/webhooks/{profile.name}",
         **{k: v for k, v in inputs.items() if k != "candidate"},
     }

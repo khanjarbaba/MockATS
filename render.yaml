@@ -1,0 +1,39 @@
+databases:
+  - name: mock-ats-db
+    plan: free  # NOTE: Render free Postgres expires after 30 days; upgrade to keep data.
+
+services:
+  - type: web
+    name: mock-ats
+    runtime: python
+    plan: free  # free tier sleeps when idle (~30s cold start); upgrade for always-on
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mock-ats-db
+          property: connectionString
+      - key: APP_PASSWORD
+        generateValue: true  # random; view/change it in the Render dashboard
+      - key: ARMED
+        value: "false"
+      # CALLBACK_BASE_URL is not needed on Render: RENDER_EXTERNAL_URL is used automatically.
+      # Fill these in the dashboard when you have real SHL credentials:
+      - key: SHL_BASE_URL
+        sync: false
+      - key: SHL_API_KEY
+        sync: false
+      - key: SHL_CLIENT_ID
+        sync: false
+      - key: SHL_CLIENT_SECRET
+        sync: false
+      - key: SHL_OAUTH_TOKEN_URL
+        sync: false
+      - key: SHL_HMAC_SECRET
+        sync: false
+      - key: SHL_WEBHOOK_SECRET
+        sync: false

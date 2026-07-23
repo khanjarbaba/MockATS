@@ -23,6 +23,17 @@ ngrok http 8000
 
 SHL should call `POST {CALLBACK_BASE_URL}/webhooks/greenhouse` — that URL is auto-injected into outgoing payloads wherever a profile uses `{{callback_url}}`.
 
+## Deploy to Render (shared/hosted)
+
+The repo includes a [render.yaml](render.yaml) blueprint: web service + free Postgres, no code changes.
+
+1. Push to GitHub, then in Render: **New → Blueprint** → pick this repo → Apply.
+2. Render provisions Postgres, wires `DATABASE_URL`, and generates a random `APP_PASSWORD` — find it under the service's **Environment** tab and share it with colleagues (they log in with **any username** + that password).
+3. Webhooks need no tunnel: the public service URL is used as the callback base automatically (`RENDER_EXTERNAL_URL`). Point SHL at `https://<service>.onrender.com/webhooks/greenhouse`.
+4. Fill in the `SHL_*` env vars in the dashboard when you have credentials. Keep `ARMED=false` until you mean it.
+
+Caveats: the free web service sleeps when idle (~30 s cold start on the next request), and Render's **free Postgres expires after 30 days** — upgrade the database plan if the data needs to outlive a demo. `/webhooks/*` is intentionally not behind the password (SHL can't authenticate); use profile HMAC verification instead.
+
 ## Safety model (read this)
 
 There is **no SHL sandbox** — every non-dry-run send hits a real endpoint. Two independent switches must both be on:

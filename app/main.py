@@ -10,9 +10,11 @@ load_dotenv()
 
 from .db import Base, SessionLocal, engine  # noqa: E402
 from .routers import logs, profiles, simulate, webhooks  # noqa: E402
+from .security import basic_auth_middleware  # noqa: E402
 from .seed import seed  # noqa: E402
 
 app = FastAPI(title="Mock ATS Simulator", version="0.1.0")
+app.middleware("http")(basic_auth_middleware)
 
 Base.metadata.create_all(bind=engine)
 with SessionLocal() as db:
@@ -27,12 +29,20 @@ STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
 @app.get("/api/status")
 def status():
     return {
         "armed": os.getenv("ARMED", "false").lower() == "true",
         "shl_base_url": os.getenv("SHL_BASE_URL", "(not set)"),
-        "callback_base_url": os.getenv("CALLBACK_BASE_URL", "(not set)"),
+        "callback_base_url": os.getenv("CALLBACK_BASE_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or "(not set)",
+        "auth_enabled": bool(os.getenv("APP_PASSWORD")),
     }
 
 
